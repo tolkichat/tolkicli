@@ -1,0 +1,38 @@
+[workspace]
+
+[package]
+name = "tolkicli"
+version = "0.1.0"
+edition = "2021"
+description = "Tolki CLI — terminal client sharing tolki-client lib + tolki-wire codecs"
+
+[[bin]]
+name = "tolkicli"
+path = "src/main.rs"
+
+# HASH-8 (2026-05-08): per Pavel directive, `tolkicli` MUST share the same
+# `tolki-client` lib that the GUI app uses — иначе CLI-side ping verifies
+# nothing about real GUI behaviour. We pull tolki-client с `cli` feature only
+# (no asr / no llm) so the binary stays ort-free.
+[dependencies]
+tolki-client = { path = "../tolki-client", default-features = false, features = ["cli"] }
+tolki-wire = { path = "../tolki-wire" }
+# libp2p types (PeerId, Multiaddr) are re-exported via
+# tolki_client::wire_client::quic_transport, but we still need a direct dep
+# to parse the CLI-side --server-peer-id / --server-multiaddr strings.
+# Same version as tolki-client to share the dep through the workspace cache.
+libp2p = { version = "0.54", features = ["quic", "noise", "tokio", "macros", "yamux"] }
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+futures = "0.3"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+# Mirror tolki-client's patches — required because tolki-client (path dep) uses
+# the tolkichat prost fork that adds the `uuid` feature.
+[patch.crates-io]
+prost = { git = "ssh://git@github.com/tolkichat/prost", branch = "uuid-support" }
+prost-derive = { git = "ssh://git@github.com/tolkichat/prost", branch = "uuid-support" }
+prost-build = { git = "ssh://git@github.com/tolkichat/prost", branch = "uuid-support" }
+prost-types = { git = "ssh://git@github.com/tolkichat/prost", branch = "uuid-support" }
