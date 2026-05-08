@@ -18,16 +18,42 @@
 //! task per the implementation plan.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use libp2p::{Multiaddr, PeerId};
+use serde::Serialize;
 use tolki_client::identity::{Mnemonic, MnemonicLength};
 use tolki_client::registration::{
     register_identity_oneshot, RegistrationConfig, RegistrationError, RegistrationResult,
 };
 use tracing::info;
 use uuid::Uuid;
+
+/// Schema version of the on-disk `identity.toml`. Bump when the layout changes
+/// in а backwards-incompatible way so older `tolkicli identity show` builds
+/// can refuse to render and tell the user к upgrade.
+const IDENTITY_SCHEMA_VERSION: u32 = 1;
+
+/// Top-level structure persisted к `~/.tolki/identity.toml`. The leading
+/// `schema_version` makes the format self-describing for forward compat.
+#[derive(Debug, Serialize)]
+struct IdentityFile {
+    schema_version: u32,
+    identity: IdentitySection,
+}
+
+/// Inner `[identity]` table mirroring [`RegistrationResult`] plus the server
+/// peer-id we registered against (so future `ping` calls can reuse it without
+/// the user having к re-supply the long flag every time).
+#[derive(Debug, Serialize)]
+struct IdentitySection {
+    user_id: String,
+    device_id: String,
+    registered_at_ms: i64,
+    is_new_account: bool,
+    server_peer_id: String,
+}
 
 /// Drive the `register` subcommand: acquire mnemonic + device-id, call into
 /// the shared registration pipeline, pretty-print the outcome.
@@ -55,6 +81,115 @@ pub async fn run_register(
         .map_err(map_registration_error)?;
 
     print_result(&result, generated.then_some(phrase.as_str()));
+    save_identity(&result, peer_id)?;
+    Ok(())
+}
+
+/// Persist the registration outcome к `~/.tolki/identity.toml`.
+///
+/// Atomic-ish: serialises к `identity.toml.tmp` first then renames into
+/// place so а Ctrl+C mid-write cannot leave а half-baked file. Refuses к
+/// overwrite if the existing file holds а *different* user-id (a previous
+/// identity is being clobbered — user must `tolkicli identity wipe` first).
+/// Same `user_id` overwrites silently; re-register на same device is
+/// idempotent on the server side too.
+///
+/// The mnemonic is **never** persisted here — that lives в keychain
+/// territory (separate later task).
+fn save_identity(result: &RegistrationResult, server_peer_id: PeerId) -> Result<()> {
+    let path = identity_file_path()?;
+    let new_user_id = Uuid::from_bytes(result.user_id);
+    if let Some(existing) = read_existing_user_id(&path)? {
+        if existing != new_user_id {
+            bail!(
+                "refusing to overwrite identity at {}: existing user_id {} \
+                 differs from new user_id {} — run `tolkicli identity wipe` first",
+                path.display(),
+                existing,
+                new_user_id,
+            );
+        }
+    }
+
+    let file = IdentityFile {
+        schema_version: IDENTITY_SCHEMA_VERSION,
+        identity: IdentitySection {
+            user_id: new_user_id.to_string(),
+            device_id: Uuid::from_bytes(result.device_id).to_string(),
+            registered_at_ms: result.registered_at_ms,
+            is_new_account: result.is_new_account,
+            server_peer_id: server_peer_id.to_string(),
+        },
+    };
+    write_identity_file(&path, &file)?;
+    info!(path = %path.display(), "register: persisted identity");
+    Ok(())
+}
+
+/// Resolve the canonical identity-file path: `${HOME}/.tolki/identity.toml`.
+fn identity_file_path() -> Result<PathBuf> {
+    let home = dirs_next::home_dir()
+        .context("could not determine $HOME — set HOME env var")?;
+    Ok(home.join(".tolki").join("identity.toml"))
+}
+
+/// If `path` exists и parses as а valid identity file, return its `user_id`.
+/// Returns `None` when the file is absent (first-time register). Surfaces
+/// parse errors loudly — а corrupted file means we cannot prove the
+/// no-clobber invariant.
+fn read_existing_user_id(path: &Path) -> Result<Option<Uuid>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read existing identity at {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&text)
+        .with_context(|| format!("failed to parse existing identity at {}", path.display()))?;
+    let user_id_str = value
+        .get("identity")
+        .and_then(|t| t.get("user_id"))
+        .and_then(|v| v.as_str())
+        .with_context(|| {
+            format!(
+                "existing identity at {} is missing [identity].user_id",
+                path.display()
+            )
+        })?;
+    let user_id = Uuid::parse_str(user_id_str).with_context(|| {
+        format!(
+            "existing identity at {} has unparseable user_id {:?}",
+            path.display(),
+            user_id_str
+        )
+    })?;
+    Ok(Some(user_id))
+}
+
+/// Serialize `file` к TOML и write atomically: tmp + rename. Ensures the
+/// parent directory exists with mode 0700 first.
+fn write_identity_file(path: &Path, file: &IdentityFile) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("identity-file path has no parent directory")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    set_dir_mode_0700(parent)?;
+
+    let body = toml::to_string_pretty(file)
+        .context("failed to serialize identity к TOML")?;
+    let banner = "# tolki identity — written by `tolkicli register`. Do not edit by hand.\n";
+    let contents = format!("{banner}{body}");
+
+    let tmp = path.with_extension("toml.tmp");
+    fs::write(&tmp, contents.as_bytes())
+        .with_context(|| format!("failed to write {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| {
+        format!(
+            "failed to rename {} → {}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 

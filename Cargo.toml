@@ -33,6 +33,11 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 # tolki-client::identity (shared с GUI), so no separate bip39 dep here.
 uuid = { version = "1", features = ["v7"] }
 dirs-next = "2"
+# CLI-1 phase 3 (2026-05-08): `register` persists identity к ~/.tolki/identity.toml
+# и `identity show` reads it back. `serde` derive feature is needed by our
+# `IdentityFile` struct; `toml` is the (de)serializer.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 # Mirror tolki-client's patches — required because tolki-client (path dep) uses
 # the tolkichat prost fork that adds the `uuid` feature.
