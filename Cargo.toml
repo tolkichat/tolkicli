@@ -28,6 +28,11 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+# CLI-1 phase 2 (2026-05-08): `register` subcommand needs UUIDv7 для fresh
+# device-id и `~/.tolki/` path resolution. Mnemonic generation comes from
+# tolki-client::identity (shared с GUI), so no separate bip39 dep here.
+uuid = { version = "1", features = ["v7"] }
+dirs-next = "2"
 
 # Mirror tolki-client's patches — required because tolki-client (path dep) uses
 # the tolkichat prost fork that adds the `uuid` feature.

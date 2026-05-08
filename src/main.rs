@@ -9,6 +9,7 @@
 //! the shared lib; this crate owns only the CLI argparse + ping orchestration.
 
 mod ping;
+mod register;
 
 use std::str::FromStr;
 
@@ -49,6 +50,15 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         duration_s: u64,
     },
+
+    /// Register а new identity via BIP-39 mnemonic. Generates fresh 24-word
+    /// phrase by default; pass `--mnemonic "<phrase>"` to register an
+    /// existing identity. Device-id persisted к `~/.tolki/device-id.bin`.
+    Register {
+        /// Existing BIP-39 phrase (12 or 24 words). Omit to generate fresh.
+        #[arg(long)]
+        mnemonic: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -66,6 +76,9 @@ async fn main() -> Result<()> {
             interval_ms,
             duration_s,
         } => ping::run_ping(peer_id, multiaddr, interval_ms, duration_s).await,
+        Command::Register { mnemonic } => {
+            register::run_register(peer_id, multiaddr, mnemonic).await
+        }
     }
 }
 
