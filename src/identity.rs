@@ -1,5 +1,5 @@
 //! `identity` subcommand group — local-only inspection / management of the
-//! `~/.tolki/` state directory.
+//! `~/.config/tolki/` state directory.
 //!
 //! CLI-1 phase 3 (2026-05-08): purely synchronous, no network I/O. Reads the
 //! files written by `register` (device-id.bin, identity.toml) and prints them
@@ -35,9 +35,9 @@ pub fn run_show() -> Result<()> {
     Ok(())
 }
 
-/// Delete `~/.tolki/identity.toml` и `~/.tolki/device-id.bin`. With
+/// Delete `~/.config/tolki/identity.toml` и `~/.config/tolki/device-id.bin`. With
 /// `yes = false` prompts on stdin and aborts unless the user types
-/// `y` / `yes`. The `~/.tolki/` directory itself is left in place — empty
+/// `y` / `yes`. The `~/.config/tolki/` directory itself is left in place — empty
 /// directories are harmless and removing it would race with concurrent
 /// state writes.
 pub fn run_wipe(yes: bool) -> Result<()> {
@@ -66,23 +66,23 @@ pub fn run_wipe(yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `${HOME}/.tolki/identity.toml`. Mirrors the helper в register.rs;
+/// Resolve `${HOME}/.config/tolki/identity.toml`. Mirrors the helper в register.rs;
 /// kept here so the `identity` module is self-contained for sync callers.
 fn identity_file_path() -> Result<PathBuf> {
     let home = dirs_next::home_dir()
         .context("could not determine $HOME — set HOME env var")?;
-    Ok(home.join(".tolki").join("identity.toml"))
+    Ok(home.join(".config").join("tolki").join("identity.toml"))
 }
 
-/// Resolve `${HOME}/.tolki/device-id.bin`. Same path as register.rs's helper;
+/// Resolve `${HOME}/.config/tolki/device-id.bin`. Same path as register.rs's helper;
 /// duplicated rather than cross-module-imported so identity stays а leaf.
 fn device_id_path() -> Result<PathBuf> {
     let home = dirs_next::home_dir()
         .context("could not determine $HOME — set HOME env var")?;
-    Ok(home.join(".tolki").join("device-id.bin"))
+    Ok(home.join(".config").join("tolki").join("device-id.bin"))
 }
 
-/// Returns `Some(uuid)` if `~/.tolki/device-id.bin` exists и is а valid
+/// Returns `Some(uuid)` if `~/.config/tolki/device-id.bin` exists и is а valid
 /// 16-byte file. Surfaces I/O errors loudly; missing file is `None`.
 fn read_device_id_if_present(path: &Path) -> Result<Option<Uuid>> {
     if !path.exists() {

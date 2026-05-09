@@ -54,8 +54,8 @@ enum Command {
 
     /// Register а new identity via BIP-39 mnemonic. Generates fresh 24-word
     /// phrase by default; pass `--mnemonic "<phrase>"` to register an
-    /// existing identity. Device-id persisted к `~/.tolki/device-id.bin`,
-    /// successful registration result persisted к `~/.tolki/identity.toml`.
+    /// existing identity. Device-id persisted к `~/.config/tolki/device-id.bin`,
+    /// successful registration result persisted к `~/.config/tolki/identity.toml`.
     Register {
         /// Server's libp2p peer-id (z-base-32 / base58btc string).
         #[arg(long)]
@@ -70,7 +70,7 @@ enum Command {
         mnemonic: Option<String>,
     },
 
-    /// Identity inspection / management. Reads local state at `~/.tolki/`.
+    /// Identity inspection / management. Reads local state at `~/.config/tolki/`.
     /// Does not require server flags — purely local filesystem operations.
     Identity {
         #[command(subcommand)]

@@ -51,9 +51,9 @@ cargo build --release         # ~6 MB ort-free binary
 | Команда | Что делает | Статус |
 |---------|-----------|--------|
 | `tolkicli ping` | Bidi-стрим ping/pong. RTT в реальном времени, summary на выходе. Smoke-тест wire-протокола | ✅ |
-| `tolkicli register` | Сгенерировать 24-word BIP-39 mnemonic (или импортировать через `--mnemonic`), сохранить device-id (UUIDv7) в `~/.tolki/device-id.bin`, отправить `tolki:registration@1.0.0/registration/register-identity` RPC, сохранить результат в `~/.tolki/identity.toml`. Делит весь pipeline с GUI через `tolki_client::registration::register_identity_oneshot` | ✅ |
-| `tolkicli identity show` | Показать содержимое `~/.tolki/identity.toml` + device-id (или сообщить что identity не зарегистрирован) | ✅ |
-| `tolkicli identity wipe [--yes]` | Удалить `~/.tolki/identity.toml` + `device-id.bin` (с подтверждением, либо `--yes` для скриптов). Mnemonic в keychain отдельный | ✅ |
+| `tolkicli register` | Сгенерировать 24-word BIP-39 mnemonic (или импортировать через `--mnemonic`), сохранить device-id (UUIDv7) в `~/.config/tolki/device-id.bin`, отправить `tolki:registration@1.0.0/registration/register-identity` RPC, сохранить результат в `~/.config/tolki/identity.toml`. Делит весь pipeline с GUI через `tolki_client::registration::register_identity_oneshot` | ✅ |
+| `tolkicli identity show` | Показать содержимое `~/.config/tolki/identity.toml` + device-id (или сообщить что identity не зарегистрирован) | ✅ |
+| `tolkicli identity wipe [--yes]` | Удалить `~/.config/tolki/identity.toml` + `device-id.bin` (с подтверждением, либо `--yes` для скриптов). Mnemonic в keychain отдельный | ✅ |
 
 **Note:** флаги `--server-peer-id` / `--server-multiaddr` живут per-subcommand (`tolkicli ping --server-peer-id ...` / `tolkicli register --server-peer-id ...`), а не на top-level. `tolkicli identity show/wipe` — pure filesystem, серверные флаги не нужны.
 
@@ -91,10 +91,10 @@ tolkicli identity wipe --yes
 
 ---
 
-## Локальный state (`~/.tolki/`)
+## Локальный state (`~/.config/tolki/`)
 
 ```
-~/.tolki/
+~/.config/tolki/
 ├── identity.toml        # post-register state (user_id, device_id, server peer-id, ...)
 └── device-id.bin        # 16 bytes, UUIDv7, generated at first register
 ```
@@ -123,7 +123,7 @@ tolkicli identity wipe --yes
 | `tolkicli logout` | Очистить локальное состояние (оставить mnemonic в keychain) |
 | `tolkicli identity show` | ✅ Показать текущий handle / IK fingerprint / device-id |
 | `tolkicli identity export` | Показать mnemonic для бэкапа (с подтверждением) |
-| `tolkicli identity wipe` | ✅ Удалить идентичность из keychain + `~/.tolki/` |
+| `tolkicli identity wipe` | ✅ Удалить идентичность из keychain + `~/.config/tolki/` |
 
 ### 👤 Username (handle)
 
@@ -202,7 +202,7 @@ tolkicli identity wipe --yes
 
 | Команда | Что делает |
 |---------|-----------|
-| `tolkicli profile list` | Все профили в `~/.tolki/profiles/` |
+| `tolkicli profile list` | Все профили в `~/.config/tolki/profiles/` |
 | `tolkicli profile create <name>` | Новый профиль (автоматически запустит `register` flow) |
 | `tolkicli profile switch <name>` | Переключиться (или `--profile <name>` к любой команде) |
 | `tolkicli profile remove <name>` | Удалить профиль (с confirmation) |

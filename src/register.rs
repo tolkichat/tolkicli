@@ -8,7 +8,7 @@
 //! 1. Mnemonic acquisition: fresh 24-word BIP-39 phrase via
 //!    `tolki_client::identity::Mnemonic::generate`, OR a user-supplied
 //!    phrase passed через `--mnemonic`.
-//! 2. Device-id persistence: 16-byte UUIDv7 stored at `~/.tolki/device-id.bin`
+//! 2. Device-id persistence: 16-byte UUIDv7 stored at `~/.config/tolki/device-id.bin`
 //!    so re-running `register` on the same machine hits the server's
 //!    `device-id-already-registered` short-circuit (idempotent).
 //! 3. Pretty-printed result + safety warning on freshly-generated mnemonics.
@@ -35,7 +35,7 @@ use uuid::Uuid;
 /// can refuse to render and tell the user к upgrade.
 const IDENTITY_SCHEMA_VERSION: u32 = 1;
 
-/// Top-level structure persisted к `~/.tolki/identity.toml`. The leading
+/// Top-level structure persisted к `~/.config/tolki/identity.toml`. The leading
 /// `schema_version` makes the format self-describing for forward compat.
 #[derive(Debug, Serialize)]
 struct IdentityFile {
@@ -85,7 +85,7 @@ pub async fn run_register(
     Ok(())
 }
 
-/// Persist the registration outcome к `~/.tolki/identity.toml`.
+/// Persist the registration outcome к `~/.config/tolki/identity.toml`.
 ///
 /// Atomic-ish: serialises к `identity.toml.tmp` first then renames into
 /// place so а Ctrl+C mid-write cannot leave а half-baked file. Refuses к
@@ -126,11 +126,11 @@ fn save_identity(result: &RegistrationResult, server_peer_id: PeerId) -> Result<
     Ok(())
 }
 
-/// Resolve the canonical identity-file path: `${HOME}/.tolki/identity.toml`.
+/// Resolve the canonical identity-file path: `${HOME}/.config/tolki/identity.toml`.
 fn identity_file_path() -> Result<PathBuf> {
     let home = dirs_next::home_dir()
         .context("could not determine $HOME — set HOME env var")?;
-    Ok(home.join(".tolki").join("identity.toml"))
+    Ok(home.join(".config").join("tolki").join("identity.toml"))
 }
 
 /// If `path` exists и parses as а valid identity file, return its `user_id`.
@@ -208,8 +208,8 @@ fn acquire_mnemonic(mnemonic_opt: Option<String>) -> Result<(String, bool)> {
     Ok((mnemonic.phrase(), true))
 }
 
-/// Read `~/.tolki/device-id.bin` if present, else generate а fresh UUIDv7
-/// и write it (creating `~/.tolki/` with mode 0700 on Unix).
+/// Read `~/.config/tolki/device-id.bin` if present, else generate а fresh UUIDv7
+/// и write it (creating `~/.config/tolki/` with mode 0700 on Unix).
 fn load_or_create_device_id() -> Result<[u8; 16]> {
     let path = device_id_path()?;
     if path.exists() {
@@ -218,11 +218,11 @@ fn load_or_create_device_id() -> Result<[u8; 16]> {
     create_device_id_file(&path)
 }
 
-/// Resolve the canonical device-id path: `${HOME}/.tolki/device-id.bin`.
+/// Resolve the canonical device-id path: `${HOME}/.config/tolki/device-id.bin`.
 fn device_id_path() -> Result<PathBuf> {
     let home = dirs_next::home_dir()
         .context("could not determine $HOME — set HOME env var")?;
-    Ok(home.join(".tolki").join("device-id.bin"))
+    Ok(home.join(".config").join("tolki").join("device-id.bin"))
 }
 
 /// Read а previously-stored 16-byte device-id. Reject any other file size так
