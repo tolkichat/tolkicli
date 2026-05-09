@@ -7,15 +7,17 @@
 //!
 //! Wire flow (client side):
 //!   1. STREAM-OPEN with empty init (NoPayload).
-//!   2. STREAM-CLIENT-CHUNK (PingFrame) per tick.
-//!   3. STREAM-SERVER-CHUNK (PongFrame) inbound — RTT computed by matching seq.
+//!   2. STREAM-CLIENT-CHUNK (PingFrame) per tick — `client_timestamp_ms` set
+//!      to the current Unix-ms wall clock at send time.
+//!   3. STREAM-SERVER-CHUNK (PongFrame) inbound — server echoes
+//!      `client_timestamp_ms` verbatim, so RTT = `now - pong.client_timestamp_ms`
+//!      без локальной seq → send-time map.
 //!   4. STREAM-CLIENT-END at deadline / Ctrl+C; await STREAM-SERVER-END (≤ 2 s).
 //!
 //! Cannot use `RpcClient` here: its reader_loop drops streaming frames on the
 //! floor and `transport.recv_stream()` is single-call. We feed inbound frames
 //! into `StreamRegistry` ourselves through a dedicated dispatcher task.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -130,7 +132,6 @@ pub async fn run_ping(
     tick.tick().await;
 
     let mut stats = PingStats::new();
-    let mut send_times: HashMap<u64, Instant> = HashMap::new();
     let mut next_seq: u64 = 0;
 
     loop {
@@ -155,11 +156,9 @@ pub async fn run_ping(
             _ = tick.tick() => {
                 next_seq += 1;
                 let seq = next_seq;
-                let now = Instant::now();
-                let timestamp_ms = current_unix_ms();
-                send_times.insert(seq, now);
+                let client_timestamp_ms = current_unix_ms();
 
-                if let Err(err) = handle.send_chunk(PingFrame { seq, timestamp_ms }).await {
+                if let Err(err) = handle.send_chunk(PingFrame { seq, client_timestamp_ms }).await {
                     warn!(seq, error = %err, "send_chunk failed, terminating");
                     break;
                 }
@@ -169,7 +168,7 @@ pub async fn run_ping(
             recv = handle.recv() => {
                 match recv {
                     Some(Ok(pong)) => {
-                        record_pong(&pong, &mut send_times, &mut stats);
+                        record_pong(&pong, &mut stats);
                     }
                     Some(Err(err)) => {
                         warn!(error = %err, "recv error, terminating");
@@ -185,7 +184,7 @@ pub async fn run_ping(
     }
 
     // After STREAM-CLIENT-END, drain any in-flight pongs (or STREAM-SERVER-END).
-    drain_pending_pongs(&mut handle, &mut send_times, &mut stats).await;
+    drain_pending_pongs(&mut handle, &mut stats).await;
 
     print_summary(&stats);
 
@@ -222,30 +221,25 @@ async fn dispatcher_loop(transport: Arc<dyn Transport>, registry: Arc<StreamRegi
     debug!("dispatcher: transport recv_stream ended, exiting");
 }
 
-/// Match a pong to its outstanding ping by `seq` and record RTT.
-fn record_pong(
-    pong: &PongFrame,
-    send_times: &mut HashMap<u64, Instant>,
-    stats: &mut PingStats,
-) {
-    if let Some(send_time) = send_times.remove(&pong.seq) {
-        let rtt = send_time.elapsed();
-        let rtt_ms = rtt.as_millis().min(u128::from(u64::MAX)) as u64;
-        println!(
-            "[seq={}] RTT={} ms  server_ts={}",
-            pong.seq, rtt_ms, pong.server_timestamp_ms
-        );
-        stats.record_rtt(rtt_ms);
-    } else {
-        warn!(seq = pong.seq, "pong without matching ping (orphan)");
-    }
+/// Compute RTT from the echoed `client_timestamp_ms` and record the sample.
+///
+/// Per canonical WIT spec the server echoes the originating ping's
+/// `client_timestamp_ms` verbatim, so RTT is simply `now - echo` —
+/// no seq → send-time bookkeeping required on the client side.
+fn record_pong(pong: &PongFrame, stats: &mut PingStats) {
+    let now_ms = current_unix_ms();
+    let rtt_ms = now_ms.saturating_sub(pong.client_timestamp_ms).max(0) as u64;
+    println!(
+        "[seq={}] RTT={} ms  server_ts={}",
+        pong.seq, rtt_ms, pong.server_timestamp_ms
+    );
+    stats.record_rtt(rtt_ms);
 }
 
 /// After close_send, wait up to [`SERVER_END_WAIT`] for late pongs and the
 /// server's STREAM-SERVER-END frame.
 async fn drain_pending_pongs(
     handle: &mut tolki_wire::rpc::stream::BidiStreamHandle<PingFrame, PongFrame, NoPayload>,
-    send_times: &mut HashMap<u64, Instant>,
     stats: &mut PingStats,
 ) {
     let drain_deadline = Instant::now() + SERVER_END_WAIT;
@@ -256,7 +250,7 @@ async fn drain_pending_pongs(
         }
         let recv = tokio::time::timeout(remaining, handle.recv()).await;
         match recv {
-            Ok(Some(Ok(pong))) => record_pong(&pong, send_times, stats),
+            Ok(Some(Ok(pong))) => record_pong(&pong, stats),
             Ok(Some(Err(err))) => {
                 warn!(error = %err, "drain: recv error");
                 break;

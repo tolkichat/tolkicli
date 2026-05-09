@@ -5647,8 +5647,11 @@ name = "tolki-wire"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "dashmap 6.1.0",
  "futures",
  "hex",
+ "libp2p-identity",
+ "multiaddr",
  "once_cell",
  "sha2",
  "thiserror 1.0.69",
