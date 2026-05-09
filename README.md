@@ -54,8 +54,9 @@ cargo build --release         # ~6 MB ort-free binary
 | `tolkicli register` | Сгенерировать 24-word BIP-39 mnemonic (или импортировать через `--mnemonic`), сохранить device-id (UUIDv7) в `~/.config/tolki/device-id.bin`, отправить `tolki:registration@1.0.0/registration/register-identity` RPC, сохранить результат в `~/.config/tolki/identity.toml`. Делит весь pipeline с GUI через `tolki_client::registration::register_identity_oneshot` | ✅ |
 | `tolkicli identity show` | Показать содержимое `~/.config/tolki/identity.toml` + device-id (или сообщить что identity не зарегистрирован) | ✅ |
 | `tolkicli identity wipe [--yes]` | Удалить `~/.config/tolki/identity.toml` + `device-id.bin` (с подтверждением, либо `--yes` для скриптов). Mnemonic в keychain отдельный | ✅ |
+| `tolkicli config show / set / reset` | Прочитать / поменять / сбросить персистентный конфиг (`~/.config/tolki/config.toml`). Сейчас держит server peer-id + multiaddr; первый запуск `ping` / `register` без флагов автоматически материализует bundled defaults | ✅ |
 
-**Note:** флаги `--server-peer-id` / `--server-multiaddr` живут per-subcommand (`tolkicli ping --server-peer-id ...` / `tolkicli register --server-peer-id ...`), а не на top-level. `tolkicli identity show/wipe` — pure filesystem, серверные флаги не нужны.
+**Note:** флаги `--server-peer-id` / `--server-multiaddr` теперь **optional** на `ping` / `register` — если не переданы, читаются из `~/.config/tolki/config.toml` (с автоматическим bootstrap на bundled defaults при первом запуске). `tolkicli identity show/wipe` и `tolkicli config …` — pure filesystem, серверные флаги не нужны.
 
 ### Примеры
 
@@ -237,9 +238,9 @@ tolkicli identity wipe --yes
 
 | Команда | Что делает |
 |---------|-----------|
-| `tolkicli config show` | Показать текущий конфиг |
-| `tolkicli config set <key> <value>` | Поменять параметр (server-address, log-level, ...) |
-| `tolkicli config reset` | Сброс к defaults |
+| `tolkicli config show` | ✅ Показать текущий конфиг (`~/.config/tolki/config.toml`) |
+| `tolkicli config set <key> <value>` | ✅ Поменять параметр (`server.peer-id`, `server.multiaddr`; future: log-level, default-format, ...) |
+| `tolkicli config reset [--yes]` | ✅ Сброс к bundled defaults (interactive confirmation либо `--yes` для скриптов) |
 
 ### 💾 Бэкап / миграция
 

@@ -8,6 +8,7 @@
 //! no llm) which is ort-free. All wire / transport / codec logic comes from
 //! the shared lib; this crate owns only the CLI argparse + ping orchestration.
 
+mod config;
 mod identity;
 mod ping;
 mod register;
@@ -34,14 +35,19 @@ enum Command {
     /// Open `tolki:ping@1.0.0/ping/ping-pong` bidi stream — sends pings at
     /// `interval_ms`, prints RTT for each pong, exits after `duration_s` or
     /// Ctrl+C. Prints summary on exit.
+    ///
+    /// `--server-peer-id` / `--server-multiaddr` are optional: when omitted,
+    /// values come from `~/.config/tolki/config.toml` (bootstrapped on first
+    /// run with bundled defaults).
     Ping {
-        /// Server's libp2p peer-id (z-base-32 / base58btc string).
+        /// Server's libp2p peer-id. Override the value from `config.toml`.
         #[arg(long)]
-        server_peer_id: String,
+        server_peer_id: Option<String>,
 
         /// Server multiaddr (e.g. `/ip4/127.0.0.1/udp/4434/quic-v1`).
+        /// Override the value from `config.toml`.
         #[arg(long)]
-        server_multiaddr: String,
+        server_multiaddr: Option<String>,
 
         /// Send interval in milliseconds (default 1000 ms = 1 Hz).
         #[arg(long, default_value_t = 1000)]
@@ -56,14 +62,19 @@ enum Command {
     /// phrase by default; pass `--mnemonic "<phrase>"` to register an
     /// existing identity. Device-id persisted к `~/.config/tolki/device-id.bin`,
     /// successful registration result persisted к `~/.config/tolki/identity.toml`.
+    ///
+    /// `--server-peer-id` / `--server-multiaddr` are optional: when omitted,
+    /// values come from `~/.config/tolki/config.toml` (bootstrapped on first
+    /// run with bundled defaults).
     Register {
-        /// Server's libp2p peer-id (z-base-32 / base58btc string).
+        /// Server's libp2p peer-id. Override the value from `config.toml`.
         #[arg(long)]
-        server_peer_id: String,
+        server_peer_id: Option<String>,
 
         /// Server multiaddr (e.g. `/ip4/127.0.0.1/udp/4434/quic-v1`).
+        /// Override the value from `config.toml`.
         #[arg(long)]
-        server_multiaddr: String,
+        server_multiaddr: Option<String>,
 
         /// Existing BIP-39 phrase (12 or 24 words). Omit to generate fresh.
         #[arg(long)]
@@ -76,6 +87,14 @@ enum Command {
         #[command(subcommand)]
         op: IdentityOp,
     },
+
+    /// Persistent CLI config (server endpoint, future: log level / default
+    /// profile). Lives at `~/.config/tolki/config.toml`. Edit via
+    /// `config set` or directly.
+    Config {
+        #[command(subcommand)]
+        op: ConfigOp,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -84,6 +103,25 @@ enum IdentityOp {
     Show,
     /// Delete local identity files. Mnemonic in keychain is NOT touched.
     Wipe {
+        /// Skip the interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigOp {
+    /// Print current config (bootstraps default-config on first run).
+    Show,
+    /// Update a single setting. Keys: `server.peer-id`, `server.multiaddr`.
+    Set {
+        /// Setting name: `server.peer-id` or `server.multiaddr`.
+        key: String,
+        /// New value (validated via libp2p parsers before persisting).
+        value: String,
+    },
+    /// Reset to bundled defaults.
+    Reset {
         /// Skip the interactive confirmation prompt.
         #[arg(long)]
         yes: bool,
@@ -101,7 +139,7 @@ async fn main() -> Result<()> {
             interval_ms,
             duration_s,
         } => {
-            let (peer_id, multiaddr) = parse_server_endpoint(&server_peer_id, &server_multiaddr)?;
+            let (peer_id, multiaddr) = resolve_server_endpoint(server_peer_id, server_multiaddr)?;
             info!(%peer_id, %multiaddr, "tolki-cli — ping");
             ping::run_ping(peer_id, multiaddr, interval_ms, duration_s).await
         }
@@ -110,7 +148,7 @@ async fn main() -> Result<()> {
             server_multiaddr,
             mnemonic,
         } => {
-            let (peer_id, multiaddr) = parse_server_endpoint(&server_peer_id, &server_multiaddr)?;
+            let (peer_id, multiaddr) = resolve_server_endpoint(server_peer_id, server_multiaddr)?;
             info!(%peer_id, %multiaddr, "tolki-cli — register");
             register::run_register(peer_id, multiaddr, mnemonic).await
         }
@@ -118,7 +156,25 @@ async fn main() -> Result<()> {
             IdentityOp::Show => identity::run_show(),
             IdentityOp::Wipe { yes } => identity::run_wipe(yes),
         },
+        Command::Config { op } => match op {
+            ConfigOp::Show => config::run_show(),
+            ConfigOp::Set { key, value } => config::run_set(&key, &value),
+            ConfigOp::Reset { yes } => config::run_reset(yes),
+        },
     }
+}
+
+/// Resolve the server endpoint precedence: explicit `--server-peer-id` /
+/// `--server-multiaddr` flags > `config.toml` values > bundled defaults
+/// (the last via `load_or_bootstrap`'s default-write path on first run).
+fn resolve_server_endpoint(
+    peer_id_arg: Option<String>,
+    multiaddr_arg: Option<String>,
+) -> Result<(PeerId, Multiaddr)> {
+    let cfg = config::load_or_bootstrap()?;
+    let peer_id_str = peer_id_arg.unwrap_or(cfg.server.peer_id);
+    let multiaddr_str = multiaddr_arg.unwrap_or(cfg.server.multiaddr);
+    parse_server_endpoint(&peer_id_str, &multiaddr_str)
 }
 
 /// Parse the `--server-peer-id` / `--server-multiaddr` pair shared by `ping`
