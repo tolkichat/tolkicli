@@ -32,9 +32,14 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Open `tolki:ping@1.0.0/ping/ping-pong` bidi stream — sends pings at
-    /// `interval_ms`, prints RTT for each pong, exits after `duration_s` or
-    /// Ctrl+C. Prints summary on exit.
+    /// Send `tolki:ping@1.0.0/ping/ping-pong` RPCs at `interval_ms`, print
+    /// RTT for each pong, exit after `duration_s` or Ctrl+C. Prints summary
+    /// on exit.
+    ///
+    /// **Default — unary** (FRAME_UNARY_REQUEST/RESPONSE per tick). Server
+    /// currently registers only unary handler; bidi stream adapter lands
+    /// later. Pass `--bidi` to opt into the bidi-stream path для testing
+    /// — currently fails until server-side bidi dispatch lands.
     ///
     /// `--server-peer-id` / `--server-multiaddr` are optional: when omitted,
     /// values come from `~/.config/tolki/config.toml` (bootstrapped on first
@@ -57,12 +62,11 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         duration_s: u64,
 
-        /// Use unary RPC path (FRAME_UNARY_REQUEST/RESPONSE) instead of bidi
-        /// stream. Server-side bidi dispatch lands later; unary unblocks the
-        /// ping demo today. Sends а single ping per `interval_ms` tick as
-        /// independent unary RPCs (loose stream emulation).
+        /// Use bidi stream path (STREAM-OPEN/CLIENT-CHUNK/SERVER-CHUNK)
+        /// instead of unary. Server-side bidi dispatch не shipped yet —
+        /// этот flag для testing когда landing'нет. Default — unary.
         #[arg(long)]
-        unary: bool,
+        bidi: bool,
     },
 
     /// Register а new identity via BIP-39 mnemonic. Generates fresh 24-word
@@ -145,14 +149,14 @@ async fn main() -> Result<()> {
             server_multiaddr,
             interval_ms,
             duration_s,
-            unary,
+            bidi,
         } => {
             let (peer_id, multiaddr) = resolve_server_endpoint(server_peer_id, server_multiaddr)?;
-            info!(%peer_id, %multiaddr, unary, "tolki-cli — ping");
-            if unary {
-                ping::run_ping_unary(peer_id, multiaddr, interval_ms, duration_s).await
-            } else {
+            info!(%peer_id, %multiaddr, bidi, "tolki-cli — ping");
+            if bidi {
                 ping::run_ping(peer_id, multiaddr, interval_ms, duration_s).await
+            } else {
+                ping::run_ping_unary(peer_id, multiaddr, interval_ms, duration_s).await
             }
         }
         Command::Register {
