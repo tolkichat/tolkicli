@@ -56,6 +56,13 @@ enum Command {
         /// Total run duration in seconds (default 30 s).
         #[arg(long, default_value_t = 30)]
         duration_s: u64,
+
+        /// Use unary RPC path (FRAME_UNARY_REQUEST/RESPONSE) instead of bidi
+        /// stream. Server-side bidi dispatch lands later; unary unblocks the
+        /// ping demo today. Sends а single ping per `interval_ms` tick as
+        /// independent unary RPCs (loose stream emulation).
+        #[arg(long)]
+        unary: bool,
     },
 
     /// Register а new identity via BIP-39 mnemonic. Generates fresh 24-word
@@ -138,10 +145,15 @@ async fn main() -> Result<()> {
             server_multiaddr,
             interval_ms,
             duration_s,
+            unary,
         } => {
             let (peer_id, multiaddr) = resolve_server_endpoint(server_peer_id, server_multiaddr)?;
-            info!(%peer_id, %multiaddr, "tolki-cli — ping");
-            ping::run_ping(peer_id, multiaddr, interval_ms, duration_s).await
+            info!(%peer_id, %multiaddr, unary, "tolki-cli — ping");
+            if unary {
+                ping::run_ping_unary(peer_id, multiaddr, interval_ms, duration_s).await
+            } else {
+                ping::run_ping(peer_id, multiaddr, interval_ms, duration_s).await
+            }
         }
         Command::Register {
             server_peer_id,

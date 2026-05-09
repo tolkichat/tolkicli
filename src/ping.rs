@@ -26,9 +26,11 @@ use futures::StreamExt;
 use libp2p::{Multiaddr, PeerId};
 use tokio::signal;
 use tolki_client::wire_client::quic_transport::QuicTransport;
-use tolki_client::wire_client::{NoPayload, PingFrame, PongFrame, PING_PONG_METHOD_ID};
+use tolki_client::wire_client::{
+    NoPayload, PingFrame, PongFrame, PING_PONG_METHOD_ID, PING_PONG_UNARY_METHOD_ID,
+};
 use tolki_wire::rpc::stream::{decode_stream_frame, open_bidi_stream, StreamRegistry};
-use tolki_wire::rpc::Transport;
+use tolki_wire::rpc::{RpcClient, Transport};
 use tracing::{debug, warn};
 
 /// How long to wait for STREAM-SERVER-END after sending STREAM-CLIENT-END.
@@ -193,6 +195,110 @@ pub async fn run_ping(
     let _ = dispatcher.await;
 
     Ok(())
+}
+
+/// Drive the unary-mode `ping` flow: connect, then per-tick fire an
+/// independent UNARY-REQUEST carrying [`PingFrame`], await the matching
+/// [`PongFrame`] response. Used while the server's `register_bidi` adapter
+/// is still pending — server's Phase 1 ships `register_unary` only.
+///
+/// Each tick = one full unary RPC (FRAME_UNARY_REQUEST → FRAME_UNARY_RESPONSE).
+/// RTT is computed from the echoed `client_timestamp_ms` (server returns it
+/// verbatim per canonical WIT spec) so no local seq → send-time map is needed.
+pub async fn run_ping_unary(
+    peer_id: PeerId,
+    multiaddr: Multiaddr,
+    interval_ms: u64,
+    duration_s: u64,
+) -> Result<()> {
+    if interval_ms == 0 {
+        anyhow::bail!("--interval-ms must be > 0");
+    }
+    if duration_s == 0 {
+        anyhow::bail!("--duration-s must be > 0");
+    }
+
+    let transport = QuicTransport::connect(peer_id, vec![multiaddr])
+        .await
+        .context("QUIC connect failed")?;
+    let client = RpcClient::new(Arc::new(transport.clone()));
+
+    println!(
+        "✓ unary ping mode  (interval={} ms, duration={} s)",
+        interval_ms, duration_s
+    );
+
+    let stats = run_unary_tick_loop(&client, interval_ms, duration_s).await;
+    print_summary(&stats);
+    transport.close();
+    Ok(())
+}
+
+/// Tick loop for unary-mode ping. Returns the accumulated [`PingStats`] when
+/// the deadline elapses or Ctrl+C fires. Extracted из [`run_ping_unary`] so
+/// каждая half (setup / orchestration) stays under 30 lines per Pavel
+/// directive on small functions.
+async fn run_unary_tick_loop(
+    client: &RpcClient<QuicTransport>,
+    interval_ms: u64,
+    duration_s: u64,
+) -> PingStats {
+    let interval = Duration::from_millis(interval_ms);
+    let deadline = Instant::now() + Duration::from_secs(duration_s);
+    let mut tick = tokio::time::interval(interval);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    tick.tick().await;
+
+    let mut stats = PingStats::new();
+    let mut next_seq: u64 = 0;
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = signal::ctrl_c() => {
+                println!("\n  ctrl-c received — stopping");
+                break;
+            }
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                debug!("deadline reached");
+                break;
+            }
+            _ = tick.tick() => {
+                send_unary_ping(client, &mut next_seq, &mut stats).await;
+            }
+        }
+    }
+    stats
+}
+
+/// Send а single unary ping и handle the pong (или error). `next_seq` is
+/// incremented before send; [`PingStats::pings_sent`] is bumped only after
+/// the request leaves the wire so failures don't inflate the loss numerator
+/// unfairly при connect failure mid-loop.
+async fn send_unary_ping(
+    client: &RpcClient<QuicTransport>,
+    next_seq: &mut u64,
+    stats: &mut PingStats,
+) {
+    *next_seq += 1;
+    let seq = *next_seq;
+    let client_timestamp_ms = current_unix_ms();
+    let req = PingFrame {
+        seq,
+        client_timestamp_ms,
+    };
+    stats.pings_sent += 1;
+
+    match client
+        .call::<PingFrame, PongFrame>(*PING_PONG_UNARY_METHOD_ID, req)
+        .await
+    {
+        Ok(pong) => record_pong(&pong, stats),
+        Err(err) => {
+            eprintln!("[seq={}] error: {}", seq, err);
+        }
+    }
 }
 
 /// Dispatcher loop: drains `transport.recv_stream()`, decodes each payload as
